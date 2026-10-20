@@ -1,0 +1,22 @@
+<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Teste local de visão</title>
+<style>body{font:18px system-ui;background:#071524;color:#cffafe;padding:32px}button{font:inherit;padding:12px}pre{white-space:pre-wrap}</style>
+<h1>Teste local dos modelos de câmera</h1><p>Processa apenas um quadro vazio, sem acessar a webcam.</p><button id="run">Testar modelos</button><pre id="result" role="status">Aguardando teste.</pre>
+<script type="module">
+const button=document.querySelector('#run'),output=document.querySelector('#result');let detector;
+button.onclick=()=>{
+ button.disabled=true;output.textContent='Carregando rosto e mãos…';
+ detector=new Worker(new URL('../src/camera/vision.worker.ts',import.meta.url),{type:'module'});
+ detector.onerror=event=>{output.textContent='Falha: '+event.message;button.disabled=false;detector.terminate();};
+ detector.onmessage=async event=>{
+  if(event.data.type==='ready'){
+   const canvas=new OffscreenCanvas(640,480),context=canvas.getContext('2d');context.fillStyle='#354052';context.fillRect(0,0,640,480);
+   const frame=await createImageBitmap(canvas);detector.postMessage({type:'frame',frame,timestamp:performance.now()},[frame]);
+  }else if(event.data.type==='result'){
+   output.textContent=JSON.stringify(event.data,null,2);
+   if(event.data.found===false&&event.data.wave===false&&event.data.kiss===false&&event.data.x===0&&event.data.y===0)output.textContent+='\nPASSOU: ambos os modelos carregaram e processaram o quadro vazio.';
+   detector.terminate();button.disabled=false;
+  }else if(event.data.type==='error'){output.textContent='Falha: '+event.data.message;detector.terminate();button.disabled=false;}
+ };
+ detector.postMessage({type:'init',base:new URL('/',location.href).href});
+};
+</script></html>
