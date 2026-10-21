@@ -43,7 +43,11 @@ export function createParticleHand(pixelRatio:number) {
   image.src=handUrl;
   return {
     group,
-    trigger(now:number){started=now;},
+    trigger(now:number){
+      // A fresh detected wave must not send an already raised hand back down.
+      if(now-started>=0&&now-started<3800)return;
+      started=now;
+    },
     update(now:number,bottom:number,right:number){
       const age=(now-started)/1000;
       if(!loaded||age<0||age>4.8){group.visible=false;return;}

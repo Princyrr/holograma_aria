@@ -42,7 +42,8 @@ scope.onmessage=async(event:MessageEvent)=>{
     const blink=blinkAmounts(scores);
     const brows=browAmounts(scores);
     const result=hands.detectForVideo(frame,message.timestamp);
-    scope.postMessage({type:'result',found:!!found,...gaze,...headPose(faceResult.faceLandmarks[0],frame.width,frame.height),wave:wave.update(result.landmarks[0],message.timestamp),kiss:kiss.update(scores,message.timestamp),smile:smileAmount(scores),smileTeeth:teethSmileAmount(scores,faceResult.faceLandmarks[0],frame.width,frame.height),blinkLeft:blink.left,blinkRight:blink.right,eyesWide:wideEyesAmount(scores),browLeft:brows.left,browRight:brows.right});
+    const waved=wave.update(result.landmarks[0],message.timestamp);
+    scope.postMessage({type:'result',handVisible:!!result.landmarks[0],waveKind:wave.lastKind,found:!!found,...gaze,...headPose(faceResult.faceLandmarks[0],frame.width,frame.height),wave:waved,kiss:kiss.update(scores,message.timestamp),smile:smileAmount(scores),smileTeeth:teethSmileAmount(scores,faceResult.faceLandmarks[0],frame.width,frame.height),blinkLeft:blink.left,blinkRight:blink.right,eyesWide:wideEyesAmount(scores),browLeft:brows.left,browRight:brows.right});
   } catch(error) {scope.postMessage({type:'error',message:String(error)});}
   finally{frame.close();}
 };

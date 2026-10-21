@@ -30,44 +30,78 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
     let utterance: SpeechSynthesisUtterance | null = null;
     let pendingSpeech = false;
     const welcomeText = 'Bem-vindos ao Observatório das Indústrias da Paraíba';
-    const normalizedText = welcomeText.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    let speechText = welcomeText;
+    let done: ((error?:string)=>void) | undefined;
+    let normalizedText = welcomeText.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     let estimatedDuration = 6.8;
     let boundaryIndex = -1, boundaryTime = 0, boundaryEnd = 0;
     const finishSpeech = () => {
       if (speaking) estimatedDuration = THREE.MathUtils.clamp((performance.now() - speechStarted) / 1000, 2, 20);
       speaking = false; pendingSpeech = false;
       setSpeechMessage('');
+      const callback=done;done=undefined;callback?.();
     };
-    const sayObservatorio = () => {
-      if (speaking || pendingSpeech) return;
+    const sayObservatorio = (text=welcomeText, onEnd?: (error?:string)=>void) => {
+      if (utterance) {utterance.onstart=null;utterance.onend=null;utterance.onerror=null;utterance.onboundary=null;}
+      if ('speechSynthesis' in window) speechSynthesis.cancel();
+      done?.();done=onEnd;
+      speaking=false;pendingSpeech=false;
+      speechText=text;normalizedText=text.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+      estimatedDuration=Math.max(2,text.length/12);
       reactionStart = -10000;
       if (!('speechSynthesis' in window)) {
-        speechStarted = performance.now(); speaking = true;
         setSpeechMessage('A voz não está disponível neste navegador.');
+        done?.('A resposta está no histórico. A voz não está disponível neste navegador.');done=undefined;
         return;
       }
-      utterance = new SpeechSynthesisUtterance(welcomeText);
+      utterance = new SpeechSynthesisUtterance(speechText);
       utterance.lang = 'pt-BR'; utterance.rate = 0.85; utterance.pitch = 1.05;
       const voices = speechSynthesis.getVoices().filter((voice) => voice.lang.toLowerCase().replace('_', '-').startsWith('pt'));
       const voice = voices.find((item) => /luciana|francisca|female/i.test(item.name)) ?? voices.find((item) => item.lang.toLowerCase() === 'pt-br') ?? voices[0];
       if (voice) utterance.voice = voice;
       pendingSpeech = true;
-      utterance.onstart = () => { pendingSpeech = false; speaking = true; speechStarted = performance.now(); boundaryIndex = -1; setSpeechMessage(welcomeText); };
+      utterance.onstart = () => { pendingSpeech = false; speaking = true; speechStarted = performance.now(); boundaryIndex = -1; setSpeechMessage(speechText); };
       utterance.onboundary = (event) => {
         if (event.name !== 'word') return;
         boundaryIndex = event.charIndex;
         boundaryTime = performance.now();
-        const word = welcomeText.slice(boundaryIndex).match(/^\S+/)?.[0] ?? '';
+        const word = speechText.slice(boundaryIndex).match(/^\S+/)?.[0] ?? '';
         boundaryEnd = boundaryIndex + word.length;
       };
       utterance.onend = finishSpeech;
-      utterance.onerror = () => { speaking = false; pendingSpeech = false; setSpeechMessage('Não foi possível reproduzir a voz.'); };
+      utterance.onerror = () => { speaking = false; pendingSpeech = false; setSpeechMessage('Não foi possível reproduzir a voz.');done?.('A resposta está no histórico, mas não foi possível reproduzir a voz.');done=undefined; };
       speechSynthesis.speak(utterance);
+    };
+    const externalSpeech=(event:Event)=>{const {text,onEnd}=(event as CustomEvent).detail;sayObservatorio(text,onEnd);};
+    let welcomeAudio:HTMLAudioElement|null=null,welcomeUrl='',welcomeRun=0;
+    let welcomeRequest:AbortController|null=null;
+    const stopSpeech=()=>{welcomeRun++;welcomeRequest?.abort();welcomeRequest=null;if(welcomeAudio){welcomeAudio.onplaying=null;welcomeAudio.onended=null;welcomeAudio.onerror=null;welcomeAudio.pause();welcomeAudio=null;}if(welcomeUrl){URL.revokeObjectURL(welcomeUrl);welcomeUrl='';}if(utterance){utterance.onstart=null;utterance.onend=null;utterance.onerror=null;}if('speechSynthesis' in window)speechSynthesis.cancel();finishSpeech();};
+    const audioStart=(event:Event)=>{stopSpeech();const {text,duration}=(event as CustomEvent).detail;speechText=text;normalizedText=text.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();estimatedDuration=duration;utterance=null;boundaryIndex=-1;speaking=true;speechStarted=performance.now();};
+    const audioEnd=()=>finishSpeech();
+    window.addEventListener('aria-audio-start',audioStart);
+    window.addEventListener('aria-audio-end',audioEnd);
+    window.addEventListener('aria-speak',externalSpeech);
+    window.addEventListener('aria-stop',stopSpeech);
+    const sayNaturalWelcome=async()=>{
+      stopSpeech();const current=welcomeRun;const request=new AbortController();welcomeRequest=request;
+      setSpeechMessage('Preparando a voz natural…');
+      const timeout=window.setTimeout(()=>request.abort(),65000);
+      try {
+        const response=await fetch('/api/speech',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:welcomeText}),signal:request.signal});
+        if(!response.ok)throw new Error('Não foi possível gerar a voz natural. Tente novamente.');
+        const blob=await response.blob();if(current!==welcomeRun)return;
+        welcomeUrl=URL.createObjectURL(blob);welcomeAudio=new Audio(welcomeUrl);
+        welcomeAudio.onplaying=()=>{if(current!==welcomeRun)return;speechText=welcomeText;normalizedText=welcomeText.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();estimatedDuration=welcomeAudio?.duration||6.8;utterance=null;boundaryIndex=-1;speaking=true;speechStarted=performance.now();setSpeechMessage(welcomeText);};
+        welcomeAudio.onended=finishSpeech;
+        welcomeAudio.onerror=()=>{finishSpeech();setSpeechMessage('Não foi possível tocar a voz natural.');};
+        await welcomeAudio.play();
+      }catch{if(current===welcomeRun)setSpeechMessage('Não foi possível tocar a voz natural. Tente novamente com dois cliques.');}
+      finally{window.clearTimeout(timeout);}
     };
     reactToClick.current = () => {
       const now = performance.now();
       if (now - lastClick < 330) {
-        window.clearTimeout(clickTimer); lastClick = -10000; sayObservatorio();
+        window.clearTimeout(clickTimer); lastClick = -10000; void sayNaturalWelcome();
       } else {
         lastClick = now;
         clickTimer = window.setTimeout(() => { if (!speaking) reactionStart = performance.now(); }, 330);
@@ -363,7 +397,7 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
       if(cameraSignal.active) {
         const visible=cameraSignal.found&&now-cameraSignal.updatedAt<500;
         gazeTarget.set(visible?cameraSignal.x:0,visible?cameraSignal.y:0);
-        if(cameraSignal.waveAt>lastWaveAt){lastWaveAt=cameraSignal.waveAt;reactionStart=now;particleHand.trigger(now);kissStartedAt=now+800;}
+        if(cameraSignal.waveAt>lastWaveAt){lastWaveAt=cameraSignal.waveAt;particleHand.trigger(now);}
       } else if(cameraWasActive)gazeTarget.set(0,0);
       if(cameraSignal.kissAt>lastKissAt){lastKissAt=cameraSignal.kissAt;kissStartedAt=now;}
       particleHand.update(now,camera.bottom,camera.right);
@@ -372,7 +406,7 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
       // The body stays fixed; head turning is applied locally in the shader.
       faceGroup.rotation.set(0,0,0);
       const elapsedSpeech = (now - speechStarted) / 1000;
-      if (speaking && elapsedSpeech > 30) finishSpeech();
+      if (speaking && elapsedSpeech > Math.max(60,estimatedDuration*3)) { speechSynthesis.cancel(); finishSpeech(); }
       if (speaking && !utterance && elapsedSpeech > estimatedDuration) finishSpeech();
       const letterDuration = estimatedDuration / normalizedText.length;
       const letterPosition = boundaryIndex >= 0
@@ -381,7 +415,7 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
       let opening = 0, rounding = 0;
       // Follow the vowels throughout the welcome sentence, using word events
       // from the browser when the selected voice provides them.
-      if (speaking) for (let i = 0; i < normalizedText.length; i++) {
+      if (speaking) for (let i = Math.max(0,Math.floor(letterPosition)-3); i < Math.min(normalizedText.length,Math.ceil(letterPosition)+4); i++) {
         const vowel = normalizedText[i];
         if (!'aeiou'.includes(vowel)) continue;
         const envelope = Math.exp(-Math.pow((letterPosition - i - 0.5) / 0.58, 2));
@@ -435,7 +469,7 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
       frame=requestAnimationFrame(render);
     };
     frame=requestAnimationFrame(render);
-    return()=>{disposed=true; window.clearTimeout(clickTimer); if (utterance) { utterance.onstart = null; utterance.onboundary = null; utterance.onend = null; utterance.onerror = null; if (speaking || pendingSpeech) speechSynthesis.cancel(); } cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('resize',resize); container.removeEventListener('pointerdown',pointerDown); container.removeEventListener('pointerup',pointerUp); reactToClick.current=()=>{}; window.removeEventListener('pointermove',followPointer); document.documentElement.removeEventListener('pointerleave',resetGaze); window.removeEventListener('blur',resetGaze); particleHand.dispose(); portraitTexture?.dispose(); image.onload=null; image.onerror=null; shoulders.onload=null; shoulders.onerror=null; geometry?.dispose(); material?.dispose(); renderer.dispose(); renderer.domElement.remove();};
+    return()=>{stopSpeech();window.removeEventListener('aria-audio-start',audioStart);window.removeEventListener('aria-audio-end',audioEnd);window.removeEventListener('aria-speak',externalSpeech);window.removeEventListener('aria-stop',stopSpeech);done?.();disposed=true; window.clearTimeout(clickTimer); if (utterance) { utterance.onstart = null; utterance.onboundary = null; utterance.onend = null; utterance.onerror = null; if (speaking || pendingSpeech) speechSynthesis.cancel(); } cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('resize',resize); container.removeEventListener('pointerdown',pointerDown); container.removeEventListener('pointerup',pointerUp); reactToClick.current=()=>{}; window.removeEventListener('pointermove',followPointer); document.documentElement.removeEventListener('pointerleave',resetGaze); window.removeEventListener('blur',resetGaze); particleHand.dispose(); portraitTexture?.dispose(); image.onload=null; image.onerror=null; shoulders.onload=null; shoulders.onerror=null; geometry?.dispose(); material?.dispose(); renderer.dispose(); renderer.domElement.remove();};
   },[]);
   return <div ref={host} className="face-hologram-view" role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); reactToClick.current(); } }} aria-label="Clique para sorrir e piscar; dois cliques rápidos para dar boas-vindas ao Observatório das Indústrias da Paraíba">{speechMessage && <p className="absolute bottom-4 left-0 right-0 text-center text-cyan-200" role="status">{speechMessage}</p>}{failed&&<p className="particle-fallback">Não foi possível exibir o holograma neste navegador.</p>}</div>;
 }
