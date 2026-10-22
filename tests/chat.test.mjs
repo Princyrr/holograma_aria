@@ -41,3 +41,20 @@ test('recorded speech is transcribed and silence gets a clear error',async()=>{
  await assert.rejects(transcribe(audio,{key:'secret',request:async()=>new Response(JSON.stringify({candidates:[{content:{parts:[{text:'SEM_FALA'}]}}]}))}),{status:422});
  await assert.rejects(transcribe({mimeType:'text/html',data:'a'},{key:'secret'}),{status:400});
 });
+
+test('answers recorded questions in one request and returns transcript for history',async()=>{
+ const audio={mimeType:'audio/webm',data:'YWJjZA=='};let calls=0;
+ const result=await chat(contents,{key:'secret',audio,request:async(url,options)=>{
+  calls++;const body=JSON.parse(options.body);
+  assert.deepEqual(body.contents.at(-1).parts[1].inlineData,audio);
+  assert.equal(body.generationConfig.responseMimeType,'application/json');
+  return new Response(JSON.stringify({candidates:[{content:{parts:[{text:JSON.stringify({transcript:'Como você está?',text:'Estou bem!'})}]}}]}));
+ }});
+ assert.equal(calls,1);assert.deepEqual(result,{transcript:'Como você está?',text:'Estou bem!'});
+});
+test('combined audio request rejects invalid audio, silence and malformed responses',async()=>{
+ await assert.rejects(chat(contents,{key:'secret',audio:{mimeType:'text/html',data:'YWJjZA=='},request:()=>assert.fail('must not contact Google')}),{status:400});
+ for(const [text,status] of [['invalid',502],[JSON.stringify({transcript:'SEM_FALA',text:'Oi'}),422],[JSON.stringify({transcript:'Oi',text:''}),502]]) {
+  await assert.rejects(chat(contents,{key:'secret',audio:{mimeType:'audio/webm',data:'YWJjZA=='},request:async()=>new Response(JSON.stringify({candidates:[{content:{parts:[{text}]}}]}))}),{status});
+ }
+});
