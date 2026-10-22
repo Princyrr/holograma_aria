@@ -28,29 +28,18 @@ Abra o endereço informado no terminal. Reinicie o servidor após alterar as var
 - Mova o mouse para acompanhar o olhar ou ative a câmera para acompanhar seu rosto e expressões.
 - Clique no holograma para sorrir e piscar. Dois cliques reproduzem as boas-vindas com voz natural e movimento da boca.
 - Acene lateralmente ou movimente os dedos para a Aria dar tchau. Faça bico de beijo para ela retribuir.
-- Use “Repetir formação” para reiniciar o efeito de partículas.
-- Os botões “Repetir formação”, “Ativar câmera” e “Falar com a Aria” ficam agrupados na lateral, ao lado do holograma. A logo do Observatório aparece no cabeçalho.
+- Os botões “Ativar câmera” e “Falar com a Aria” ficam agrupados na lateral, ao lado do holograma. A logo do Observatório aparece no cabeçalho.
 
 ## Conversa por voz
 
-Clique em “Falar com a Aria” e permita o microfone. Fale e faça uma pausa para enviar automaticamente ou clique em “Enviar pergunta”. Cada gravação tem limite de 30 segundos. Após a resposta, clique novamente para fazer outra pergunta.
-
-O servidor envia o áudio ao Gemini para transcrição, gera uma resposta e solicita a voz natural ao Gemini TTS. A Aria responde por áudio, sem exibir perguntas, respostas ou histórico na interface. As últimas dez trocas ficam em memória para dar contexto à conversa; atualizar a página limpa esse contexto.
-
-Prefira Chrome ou Edge em localhost ou HTTPS. Se o navegador bloquear a reprodução automática, clique em “Ouvir resposta”. É possível interromper a resposta pelo botão lateral.
-
-Seu áudio e o contexto da conversa são enviados ao Google. O servidor local não salva gravações em disco. A chave é utilizada somente no servidor e não é enviada ao navegador. A geração ocorre em etapas, por isso pode haver espera entre a pergunta e o início da voz.
-
-## Verificação
-
-```sh
-npm run typecheck
-npm test
-npm run build
-```
-
-Os testes cobrem reconhecimento de gestos, integração com o Gemini, transcrição e formato do áudio. A versão de produção é gerada em `dist`.
-
-## Publicação
-
 ![Holograma Aria](src/assets/holograma.png)
+
+### Voz em tempo real
+
+Clique em **Falar com a Aria**, permita o microfone e converse normalmente. O microfone continua ativo até clicar em **Encerrar conversa**. Faça perguntas seguidas sem clicar novamente e interrompa a resposta falando. O áudio é enviado e reproduzido em pequenos trechos, sem aguardar transcrição e geração de voz em chamadas separadas.
+
+O modo usa `GEMINI_LIVE_MODEL=gemini-3.8-live` por padrão e a voz definida em `GEMINI_VOICE`. A chave precisa ter acesso ao modelo Live. Reinicie o servidor após mudar a configuração. Use localhost ou HTTPS para permitir o microfone.
+
+A conversa mantém contexto durante a sessão; ao encerrar e reconectar, as últimas dez perguntas e respostas completas são recuperadas em memória. Atualizar a página apaga esse histórico. Se o serviço encerrar a conexão, clique novamente para reconectar. Não há gravação persistente no projeto.
+
+A chave permanente fica no servidor. O navegador recebe uma credencial temporária de uso único e transmite apenas áudio diretamente ao Google, sem enviar a câmera. Saudações por detecção da câmera continuam disponíveis quando a conversa está desligada.
