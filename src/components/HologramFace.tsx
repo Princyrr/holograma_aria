@@ -131,6 +131,8 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
     document.documentElement.addEventListener('pointerleave', resetGaze);
     window.addEventListener('blur', resetGaze);
     const particleHand=createParticleHand(renderer.getPixelRatio());
+    const greetingWave=()=>particleHand.trigger(performance.now());
+    window.addEventListener('aria-greeting-wave',greetingWave);
     const handScene=new THREE.Scene();
     handScene.add(particleHand.group);
     const handCamera=new THREE.OrthographicCamera(-2,2,2,-4,.1,50);
@@ -217,8 +219,8 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
       geometry.setAttribute('aUv',new THREE.Float32BufferAttribute(uvs,2));
       material=new THREE.ShaderMaterial({
         transparent:true,depthWrite:false,vertexColors:true,
-        uniforms:{uHeadYaw:{value:0},uTorsoStretch:{value:Math.max(1,(-1.38-camera.bottom+0.60)/2.48)},uFaceScale:{value:new THREE.Vector2(740/cropWidth,860/cropHeight)},uEyeWorldY:{value:(440-426)*3.45/860},uTime:{value:0},uFormation:{value:0},uPixelRatio:{value:renderer.getPixelRatio()},uGaze:{value:gaze},uEyes:{value:eyes},uPortrait:{value:portraitTexture},uRound:{value:0},uSpeak:{value:0},uSmile:{value:0},uTeeth:{value:0},uBrows:{value:new THREE.Vector2()},uCameraActive:{value:0},uKiss:{value:0},uWink:{value:0},uWinkLeft:{value:0},uMouth:{value:mouth}},
-        vertexShader:`uniform float uHeadYaw; uniform float uTorsoStretch; uniform vec2 uFaceScale; uniform float uEyeWorldY; uniform float uTime; uniform float uFormation; uniform float uPixelRatio;
+        uniforms:{uWaveShoulder:{value:0},uHeadYaw:{value:0},uTorsoStretch:{value:Math.max(1,(-1.38-camera.bottom+0.60)/2.48)},uFaceScale:{value:new THREE.Vector2(740/cropWidth,860/cropHeight)},uEyeWorldY:{value:(440-426)*3.45/860},uTime:{value:0},uFormation:{value:0},uPixelRatio:{value:renderer.getPixelRatio()},uGaze:{value:gaze},uEyes:{value:eyes},uPortrait:{value:portraitTexture},uRound:{value:0},uSpeak:{value:0},uSmile:{value:0},uTeeth:{value:0},uBrows:{value:new THREE.Vector2()},uCameraActive:{value:0},uKiss:{value:0},uWink:{value:0},uWinkLeft:{value:0},uMouth:{value:mouth}},
+        vertexShader:`uniform float uWaveShoulder; uniform float uHeadYaw; uniform float uTorsoStretch; uniform vec2 uFaceScale; uniform float uEyeWorldY; uniform float uTime; uniform float uFormation; uniform float uPixelRatio;
           uniform float uRound; uniform float uSpeak; uniform float uSmile; uniform float uTeeth; uniform vec2 uBrows; uniform float uCameraActive; uniform float uKiss; uniform float uWink; uniform float uWinkLeft; uniform vec2 uMouth; uniform vec2 uGaze; uniform vec4 uEyes; uniform sampler2D uPortrait; attribute vec2 aUv;
           attribute vec3 aOrigin; attribute float aAlpha; attribute float aSeed;
           varying vec3 vColor; varying float vAlpha; varying float vY; varying float vX; varying float vClothing;
@@ -232,6 +234,14 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
             float headDepth=.38*sqrt(max(0.0,1.0-pow(clamp(position.x/1.35,-1.0,1.0),2.0)));
             target.x=position.x*cos(angle)+headDepth*sin(angle);
             target.z+=-position.x*sin(angle)+headDepth*(cos(angle)-1.0);
+            // The waving-side shoulder lifts through a broad soft mask into the upper torso.
+            float shoulderSide=smoothstep(.35,1.45,position.x);
+            float belowNeck=1.0-smoothstep(-1.85,-1.45,position.y);
+            float shoulderBand=exp(-pow((position.y+2.25)/.95,2.0));
+            float shoulderWeight=shoulderSide*belowNeck*shoulderBand;
+            target.y+=uWaveShoulder*.075*shoulderWeight;
+            target.x+=uWaveShoulder*.012*shoulderWeight;
+
             vec3 p=mix(aOrigin,target,ease);
             p.z+=sin(uTime*0.8+aSeed*6.28)*0.012*ease*(1.0-ease);
             // Warp the sampled eye region, keeping the particle positions and eyelids stable.
@@ -400,7 +410,8 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
         if(cameraSignal.waveAt>lastWaveAt){lastWaveAt=cameraSignal.waveAt;particleHand.trigger(now);}
       } else if(cameraWasActive)gazeTarget.set(0,0);
       if(cameraSignal.kissAt>lastKissAt){lastKissAt=cameraSignal.kissAt;kissStartedAt=now;}
-      particleHand.update(now,camera.bottom,camera.right);
+      const shoulderWave=particleHand.update(now,camera.bottom,camera.right);
+      if(material)material.uniforms.uWaveShoulder.value=reduced?0:shoulderWave;
       cameraWasActive=cameraSignal.active;
       gaze.lerp(gazeTarget, 1 - Math.exp(-delta * 8));
       // The body stays fixed; head turning is applied locally in the shader.
@@ -469,7 +480,7 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
       frame=requestAnimationFrame(render);
     };
     frame=requestAnimationFrame(render);
-    return()=>{stopSpeech();window.removeEventListener('aria-audio-start',audioStart);window.removeEventListener('aria-audio-end',audioEnd);window.removeEventListener('aria-speak',externalSpeech);window.removeEventListener('aria-stop',stopSpeech);done?.();disposed=true; window.clearTimeout(clickTimer); if (utterance) { utterance.onstart = null; utterance.onboundary = null; utterance.onend = null; utterance.onerror = null; if (speaking || pendingSpeech) speechSynthesis.cancel(); } cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('resize',resize); container.removeEventListener('pointerdown',pointerDown); container.removeEventListener('pointerup',pointerUp); reactToClick.current=()=>{}; window.removeEventListener('pointermove',followPointer); document.documentElement.removeEventListener('pointerleave',resetGaze); window.removeEventListener('blur',resetGaze); particleHand.dispose(); portraitTexture?.dispose(); image.onload=null; image.onerror=null; shoulders.onload=null; shoulders.onerror=null; geometry?.dispose(); material?.dispose(); renderer.dispose(); renderer.domElement.remove();};
+    return()=>{window.removeEventListener('aria-greeting-wave',greetingWave);stopSpeech();window.removeEventListener('aria-audio-start',audioStart);window.removeEventListener('aria-audio-end',audioEnd);window.removeEventListener('aria-speak',externalSpeech);window.removeEventListener('aria-stop',stopSpeech);done?.();disposed=true; window.clearTimeout(clickTimer); if (utterance) { utterance.onstart = null; utterance.onboundary = null; utterance.onend = null; utterance.onerror = null; if (speaking || pendingSpeech) speechSynthesis.cancel(); } cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('resize',resize); container.removeEventListener('pointerdown',pointerDown); container.removeEventListener('pointerup',pointerUp); reactToClick.current=()=>{}; window.removeEventListener('pointermove',followPointer); document.documentElement.removeEventListener('pointerleave',resetGaze); window.removeEventListener('blur',resetGaze); particleHand.dispose(); portraitTexture?.dispose(); image.onload=null; image.onerror=null; shoulders.onload=null; shoulders.onerror=null; geometry?.dispose(); material?.dispose(); renderer.dispose(); renderer.domElement.remove();};
   },[]);
   return <div ref={host} className="face-hologram-view" role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); reactToClick.current(); } }} aria-label="Clique para sorrir e piscar; dois cliques rápidos para dar boas-vindas ao Observatório das Indústrias da Paraíba">{speechMessage && <p className="absolute bottom-4 left-0 right-0 text-center text-cyan-200" role="status">{speechMessage}</p>}{failed&&<p className="particle-fallback">Não foi possível exibir o holograma neste navegador.</p>}</div>;
 }

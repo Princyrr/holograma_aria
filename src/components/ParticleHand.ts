@@ -5,8 +5,10 @@ import handUrl from '../assets/hologram-wave-hand.png';
 export function createParticleHand(pixelRatio:number) {
   const group=new THREE.Group();group.visible=false;group.scale.setScalar(1.80);
   const geometry=new THREE.BufferGeometry();
-  const material=new THREE.ShaderMaterial({transparent:true,depthWrite:false,vertexColors:true,uniforms:{uRatio:{value:pixelRatio},uOpacity:{value:1},uSleeveStretch:{value:1}},
-    vertexShader:`uniform float uRatio;uniform float uSleeveStretch;varying vec3 vColor;varying float vAlpha;attribute float aAlpha;void main(){vColor=color;vAlpha=aAlpha;vec3 p=position;if(p.y<-.35)p.y=-.35+(p.y+.35)*uSleeveStretch;gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0);gl_PointSize=2.2*uRatio;}`,
+  const wristAngle={value:0};
+  const wristBend=`float wristWeight=smoothstep(-.28,.12,p.y);float wristTurn=uWristAngle*wristWeight;vec2 wrist=p.xy-vec2(0.,-.18);p.xy=vec2(wrist.x*cos(wristTurn)-wrist.y*sin(wristTurn),wrist.x*sin(wristTurn)+wrist.y*cos(wristTurn))+vec2(0.,-.18);`;
+  const material=new THREE.ShaderMaterial({transparent:true,depthWrite:false,vertexColors:true,uniforms:{uWristAngle:wristAngle,uRatio:{value:pixelRatio},uOpacity:{value:1},uSleeveStretch:{value:1}},
+    vertexShader:`uniform float uWristAngle;uniform float uRatio;uniform float uSleeveStretch;varying vec3 vColor;varying float vAlpha;attribute float aAlpha;void main(){vColor=color;vAlpha=aAlpha;vec3 p=position;if(p.y<-.35)p.y=-.35+(p.y+.35)*uSleeveStretch;${wristBend}gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0);gl_PointSize=2.2*uRatio;}`,
     fragmentShader:`uniform float uOpacity;varying vec3 vColor;varying float vAlpha;void main(){float d=length(gl_PointCoord-.5);if(d>.5)discard;float coverage=exp(-d*d*8.)*(1.-smoothstep(.35,.5,d));gl_FragColor=vec4(vColor*1.12,coverage*vAlpha*uOpacity);\n#include <tonemapping_fragment>\n#include <colorspace_fragment>\n}`});
   const hand=new THREE.Points(geometry,material);hand.renderOrder=3;hand.frustumCulled=false;group.add(hand);
   let started=-Infinity,loaded=false,disposed=false;
@@ -18,10 +20,10 @@ export function createParticleHand(pixelRatio:number) {
     // A particle layer above it retains the holographic finish.
     backingTexture=new THREE.Texture(image);backingTexture.colorSpace=THREE.SRGBColorSpace;backingTexture.needsUpdate=true;
     const worldWidth=image.naturalWidth*1.65/780,worldHeight=image.naturalHeight*1.65/780;
-    backingGeometry=new THREE.PlaneGeometry(worldWidth,worldHeight,1,80);
+    backingGeometry=new THREE.PlaneGeometry(worldWidth,worldHeight,40,100);
     backingGeometry.translate(-worldWidth*.02,0,-.003);
-    backingMaterial=new THREE.ShaderMaterial({depthWrite:true,depthTest:true,transparent:false,uniforms:{uHand:{value:backingTexture},uSleeveStretch:material.uniforms.uSleeveStretch},
-      vertexShader:`uniform float uSleeveStretch;varying vec2 vUv;void main(){vUv=uv;vec3 p=position;if(p.y<-.35)p.y=-.35+(p.y+.35)*uSleeveStretch;gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0);}`,
+    backingMaterial=new THREE.ShaderMaterial({depthWrite:true,depthTest:true,transparent:false,uniforms:{uWristAngle:wristAngle,uHand:{value:backingTexture},uSleeveStretch:material.uniforms.uSleeveStretch},
+      vertexShader:`uniform float uWristAngle;uniform float uSleeveStretch;varying vec2 vUv;void main(){vUv=uv;vec3 p=position;if(p.y<-.35)p.y=-.35+(p.y+.35)*uSleeveStretch;${wristBend}gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0);}`,
       fragmentShader:`uniform sampler2D uHand;varying vec2 vUv;void main(){vec4 tex=texture2D(uHand,vUv);if(tex.a<.85)discard;gl_FragColor=vec4(tex.rgb*.16,1.0);\n#include <tonemapping_fragment>\n#include <colorspace_fragment>\n}`});
     const backing=new THREE.Mesh(backingGeometry,backingMaterial);backing.renderOrder=2;backing.frustumCulled=false;group.add(backing);
     const canvas=document.createElement('canvas');canvas.width=560;canvas.height=Math.round(canvas.width*image.naturalHeight/image.naturalWidth);
@@ -50,7 +52,7 @@ export function createParticleHand(pixelRatio:number) {
     },
     update(now:number,bottom:number,right:number){
       const age=(now-started)/1000;
-      if(!loaded||age<0||age>4.8){group.visible=false;return;}
+      if(!loaded||age<0||age>4.8){group.visible=false;return 0;}
       group.visible=true;
       const smooth=(t:number)=>{t=THREE.MathUtils.clamp(t,0,1);return t*t*(3-2*t);};
       const rise=1-Math.pow(1-THREE.MathUtils.clamp(age/1.0,0,1),3),lower=smooth((age-3.8)/1.0),lift=rise*(1-lower);
@@ -61,7 +63,9 @@ export function createParticleHand(pixelRatio:number) {
       // Restore the original full waving arc; the hand is drawn above the container.
       group.rotation.z=.045+Math.sin((age-.8)*6.8)*.17*waving;
       group.rotation.y=0;
+      wristAngle.value=Math.sin((age-.8)*4.8)*.065*waving;
       material.uniforms.uOpacity.value=Math.min(1,lift*5);
+      return lift*(.88+Math.sin((age-.8)*4.0)*.12*waving);
     },
     dispose(){disposed=true;image.onload=null;geometry.dispose();material.dispose();backingTexture?.dispose();backingGeometry?.dispose();backingMaterial?.dispose();}
   };

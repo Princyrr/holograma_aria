@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import ts from 'typescript';
 const source=await readFile(new URL('../src/camera/tracking.ts',import.meta.url),'utf8');
 const {outputText}=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.ES2022}});
-const {teethSmileAmount,headPose,WaveDetector,KissDetector,smileAmount,blinkAmounts,wideEyesAmount,browAmounts,openPalm,faceGaze}=await import('data:text/javascript;base64,'+Buffer.from(outputText).toString('base64'));
+const {ArrivalDetector,teethSmileAmount,headPose,WaveDetector,KissDetector,smileAmount,blinkAmounts,wideEyesAmount,browAmounts,openPalm,faceGaze}=await import('data:text/javascript;base64,'+Buffer.from(outputText).toString('base64'));
 function palm(x=.5){
   const points=Array.from({length:21},()=>({x,y:.55}));points[0]={x,y:.75};
   for(const [mcp,pip,tip,offset] of [[5,6,8,-.07],[9,10,12,-.02],[13,14,16,.03],[17,18,20,.07]]){
@@ -167,4 +167,54 @@ test('raising a hand with incidental fingertip changes never triggers a wave',()
   for(const point of hand)point.y-=i*.02;
   assert.equal(detector.update(hand,i*100),false);
  }
+});
+
+
+test('arrival greets only after stable detection and does not repeat for movement',()=>{
+ const detector=new ArrivalDetector();
+ assert.equal(detector.update([{x:.5,y:.5}],0),null);
+ assert.equal(detector.update([{x:.51,y:.5}],700),'Oi!');
+ for(let time=800;time<10000;time+=100)assert.equal(detector.update([{x:.51+Math.sin(time)*.01,y:.5}],time),null);
+});
+test('a second arriving face is greeted without repeating the first greeting',()=>{
+ const detector=new ArrivalDetector();const first={x:.25,y:.5},second={x:.75,y:.5};
+ detector.update([first],0);assert.equal(detector.update([first],700),'Oi!');
+ detector.update([first,second],5000);
+ assert.equal(detector.update([second,first],5700),'Oi, você também!');
+ assert.equal(detector.update([first,second],11000),null);
+});
+test('three stable faces trigger one group greeting and tolerate short tracking gaps',()=>{
+ const detector=new ArrivalDetector();const group=[{x:.2,y:.5},{x:.5,y:.5},{x:.8,y:.5}];
+ detector.update(group,0);assert.equal(detector.update(group,700),'Quanta gente! Tudo bem com vocês?');
+ detector.update([],1000);assert.equal(detector.update(group,1500),null);
+ assert.equal(detector.update(group,7000),null);
+});
+test('returning after leaving gets a new greeting while a brief disappearance does not',()=>{
+ const detector=new ArrivalDetector();const face={x:.5,y:.5};
+ detector.update([face],0);detector.update([face],700);
+ detector.update([],1000);assert.equal(detector.update([face],1500),null);
+ detector.update([],5000);detector.update([face],6000);
+ assert.equal(detector.update([face],6700),'Oi, você também!');
+});
+test('a transient detection does not trigger a greeting',()=>{
+ const detector=new ArrivalDetector();detector.update([{x:.5,y:.5}],0);
+ assert.equal(detector.update([],500),null);assert.equal(detector.update([],2500),null);
+});
+
+test('new arrivals rotate greetings while keeping the original greeting',()=>{
+ const detector=new ArrivalDetector(),heard=[];
+ for(let i=0;i<8;i++){
+   const time=i*7000;detector.update([],time);detector.update([{x:.5,y:.5}],time);
+   heard.push(detector.update([{x:.5,y:.5}],time+700));
+ }
+ assert.equal(heard[0],'Oi!');assert.equal(heard[1],'Oi, você também!');
+ assert.equal(heard[2],'Olá! Tudo bem?');
+ assert.equal(new Set(heard.slice(1,7)).size,6);
+ assert.equal(heard[7],'Oi, você também!');
+});
+test('returning groups receive varied crowd greetings',()=>{
+ const detector=new ArrivalDetector(),group=[{x:.2,y:.5},{x:.5,y:.5},{x:.8,y:.5}];
+ detector.update(group,0);assert.equal(detector.update(group,700),'Quanta gente! Tudo bem com vocês?');
+ detector.update([],6000);detector.update([],8500);detector.update(group,9000);
+ assert.equal(detector.update(group,9700),'Oi, pessoal! Que bom ver vocês por aqui!');
 });

@@ -12,6 +12,7 @@ export default function CameraTracker({tracking}:{tracking:MutableRefObject<Came
   const lastStatus=useRef('');
   const reactionNotice=useRef({text:'',until:0});
   const stop=(notice='Câmera desligada. A personagem acompanha o mouse.')=>{
+    window.dispatchEvent(new Event('aria-camera-off'));
     generation.current++;enabled.current=false;
     cancelAnimationFrame(frameRequest.current);window.clearTimeout(startupTimeout.current);
     worker.current?.terminate();worker.current=null;
@@ -53,6 +54,7 @@ export default function CameraTracker({tracking}:{tracking:MutableRefObject<Came
         if(result.type==='error'){stop('Não foi possível processar a câmera. Tente novamente.');return;}
         if(result.type!=='result')return;
         const now=performance.now();
+        if(result.greeting)window.dispatchEvent(new CustomEvent('aria-greeting',{detail:{text:result.greeting}}));
         if(import.meta.env.DEV&&diagnostics.current){
           const counts=waveCounts.current;counts.frames++;
           if(result.handVisible)counts.handFrames++;

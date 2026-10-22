@@ -192,3 +192,41 @@ export function teethSmileAmount(scores:Record<string,number>|undefined,points:P
   const t=Math.max(0,Math.min(1,(gap-.025)/.105));
   return smile*t*t*(3-2*t);
 }
+
+// Short-lived position tracks, not facial identity recognition or stored biometrics.
+export class ArrivalDetector {
+  private tracks:{x:number;y:number;first:number;last:number;greeted:boolean}[]=[];
+  private lastGreeting=-Infinity;
+  private hasGreeted=false;
+  private personalGreeting=0;
+  private groupGreeting=0;
+  private crowd=false;
+  private quietSince:number|null=null;
+  update(faces:{x:number;y:number}[],now:number):string|null {
+    this.tracks=this.tracks.filter(track=>now-track.last<1800);
+    const available=new Set(this.tracks);
+    for(const face of faces) {
+      let nearest:typeof this.tracks[number]|undefined,score=.20;
+      for(const track of available) {const distance=Math.hypot(face.x-track.x,face.y-track.y);if(distance<score){score=distance;nearest=track;}}
+      if(nearest){available.delete(nearest);nearest.x=face.x;nearest.y=face.y;nearest.last=now;}
+      else this.tracks.push({...face,first:now,last:now,greeted:false});
+    }
+    const visible=this.tracks.filter(track=>track.last===now&&now-track.first>=650);
+    if(visible.length<3){this.quietSince??=now;if(now-this.quietSince>=2000)this.crowd=false;}
+    else this.quietSince=null;
+    if(now-this.lastGreeting<4500)return null;
+    if(visible.length>=3&&!this.crowd) {
+      this.crowd=true;this.hasGreeted=true;this.lastGreeting=now;
+      for(const track of visible)track.greeted=true;
+      const greetings=['Quanta gente! Tudo bem com vocês?','Oi, pessoal! Que bom ver vocês por aqui!','Quanta gente por aqui! Sejam bem-vindos!'];
+      return greetings[this.groupGreeting++%greetings.length];
+    }
+    const arrivals=visible.filter(track=>!track.greeted);
+    if(!arrivals.length)return null;
+    for(const track of arrivals)track.greeted=true;
+    if(this.crowd)return null;
+    const greetings=['Oi, você também!','Olá! Tudo bem?','Oi! Que bom ver você por aqui!','Olá! Seja bem-vindo!','Opa, mais alguém por aqui! Tudo bem?','Oi! Como você está?'];
+    const text=this.hasGreeted?greetings[this.personalGreeting++%greetings.length]:'Oi!';
+    this.hasGreeted=true;this.lastGreeting=now;return text;
+  }
+}
