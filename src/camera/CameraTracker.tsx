@@ -1,8 +1,11 @@
-import { useEffect, useRef, useState, type MutableRefObject } from 'react';
+import FaceRegistration from '../identity/FaceRegistration';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { idleTracking, type CameraTracking } from './tracking';
 type Status='off'|'loading'|'on';
-export default function CameraTracker({tracking}:{tracking:MutableRefObject<CameraTracking>}) {
+export default function CameraTracker({tracking,registrationPage=false}:{tracking:MutableRefObject<CameraTracking>;registrationPage?:boolean}) {
   const video=useRef<HTMLVideoElement>(null);
+  const identityEnabled=useRef(registrationPage);
+  const onIdentityEnabled=useCallback((value:boolean)=>{identityEnabled.current=registrationPage||value;},[registrationPage]);
   const diagnostics=useRef<HTMLOutputElement>(null);
   const waveCounts=useRef({frames:0,handFrames:0,fingers:0,sideways:0});
   const stream=useRef<MediaStream|null>(null),worker=useRef<Worker|null>(null);
@@ -46,7 +49,7 @@ export default function CameraTracker({tracking}:{tracking:MutableRefObject<Came
       stream.current=media;const element=video.current!;element.srcObject=media;await element.play();
       if(run!==generation.current)return;
       media.getVideoTracks()[0]?.addEventListener('ended',()=>{if(run===generation.current)stop('A câmera foi desconectada. Você pode ativá-la novamente.');});
-      tracking.current={...idleTracking(),active:true};setStatus('on');setMessage('Procurando seu rosto…');
+      tracking.current={...idleTracking(),active:true};setStatus('on');setMessage(registrationPage?'Câmera pronta. Preencha seu nome e autorize o cadastro abaixo.':'Procurando seu rosto…');
       detector.onerror=()=>{if(run===generation.current)stop('O reconhecimento foi interrompido. Tente ativar a câmera novamente.');};
       detector.onmessage=event=>{
         if(run!==generation.current)return;
@@ -54,7 +57,7 @@ export default function CameraTracker({tracking}:{tracking:MutableRefObject<Came
         if(result.type==='error'){stop('Não foi possível processar a câmera. Tente novamente.');return;}
         if(result.type!=='result')return;
         const now=performance.now();
-        if(result.greeting)window.dispatchEvent(new CustomEvent('aria-greeting',{detail:{text:result.greeting}}));
+        if(result.greeting&&!identityEnabled.current)window.dispatchEvent(new CustomEvent('aria-greeting',{detail:{text:result.greeting}}));
         if(import.meta.env.DEV&&diagnostics.current){
           const counts=waveCounts.current;counts.frames++;
           if(result.handVisible)counts.handFrames++;
@@ -66,7 +69,7 @@ export default function CameraTracker({tracking}:{tracking:MutableRefObject<Came
         if(result.wave)reactionNotice.current={text:'Tchau reconhecido: acenando!',until:now+2200};
         if(result.kiss)reactionNotice.current={text:'Beijo reconhecido! Mandando um beijo de volta.',until:now+2200};
         const text=now<reactionNotice.current.until?reactionNotice.current.text:result.kiss?'Beijo reconhecido! Mandando um beijo de volta.':result.wave?'Tchau reconhecido! 😊':result.found?'Acene para ela dar tchau. Faça bico de beijo para ela retribuir.':'Não encontrei seu rosto. Fique de frente para a câmera.';
-        if(text!==lastStatus.current){lastStatus.current=text;setMessage(text);}
+        if(!registrationPage&&text!==lastStatus.current){lastStatus.current=text;setMessage(text);}
       };
       let lastSent=0,lastVideoTime=-1;
       const capture=async(now:number)=>{
@@ -90,7 +93,8 @@ export default function CameraTracker({tracking}:{tracking:MutableRefObject<Came
   };
   return <aside className="camera-panel" aria-label="Controle da câmera">
     <button className="aria-control-button" type="button" onClick={()=>status==='off'?void start():stop()} aria-pressed={status==='on'}>{status==='loading'?'Cancelar ativação':status==='on'?'Desligar câmera':'Ativar câmera'}</button>
-    <p className="camera-status camera-status-hidden" role="status">{message}</p>
+    <FaceRegistration registrationPage={registrationPage} video={video} active={status==='on'} onEnabled={onIdentityEnabled} />
+    <p className={registrationPage?'camera-status':'camera-status camera-status-hidden'} role="status">{message}</p>
     {import.meta.env.DEV&&<output ref={diagnostics} data-testid="vision-diagnostics" hidden aria-hidden="true" />}
     <video ref={video} className="camera-preview" hidden autoPlay muted playsInline aria-hidden="true" />
   </aside>;

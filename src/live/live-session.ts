@@ -1,6 +1,6 @@
 export type LivePhase='connecting'|'listening'|'thinking'|'speaking';
 export type LiveTurn={role:'user'|'model';parts:{text:string}[]};
-type Callbacks={phase:(phase:LivePhase)=>void;error:(message:string)=>void;turn:(user:string,model:string)=>void};
+type Callbacks={phase:(phase:LivePhase)=>void;error:(message:string)=>void;turn:(user:string,model:string)=>void;transcript?:(text:string)=>void};
 
 export function encodePcm(samples:Float32Array,rate:number):string {
   const length=Math.floor(samples.length*16000/rate),bytes=new Uint8Array(length*2),view=new DataView(bytes.buffer);
@@ -32,6 +32,8 @@ export class LiveSession {
   private abort=new AbortController();
   private stopped=false;
   private ready=false;
+  private microphonePaused=false;
+  private enrollmentMode=false;
   private nextTime=0;
   private complete=false;
   private userText='';
@@ -55,7 +57,7 @@ export class LiveSession {
       this.input=ctx.createMediaStreamSource(media);this.capture=new AudioWorkletNode(ctx,'aria-pcm-capture');this.mute=ctx.createGain();this.mute.gain.value=0;
       this.input.connect(this.capture);this.capture.connect(this.mute);this.mute.connect(ctx.destination);
       this.capture.port.onmessage=event=>{
-        if(!this.ready||this.stopped||!this.socket||this.socket.readyState!==WebSocket.OPEN)return;
+        if(this.microphonePaused||!this.ready||this.stopped||!this.socket||this.socket.readyState!==WebSocket.OPEN)return;
         if(this.socket.bufferedAmount>256000){this.fail('A conexão está lenta demais para áudio em tempo real. Tente novamente.');return;}
         this.send({realtimeInput:{audio:{data:encodePcm(event.data,ctx.sampleRate),mimeType:'audio/pcm;rate=16000'}}});
       };
@@ -75,6 +77,14 @@ export class LiveSession {
       };
     }catch(error){if(!this.stopped)this.fail(error instanceof DOMException&&error.name==='NotAllowedError'?'Permita o microfone no navegador para conversar.':error instanceof Error?error.message:'Não foi possível iniciar a conversa.');}
   }
+  setEnrollmentMode(enabled:boolean){
+    this.enrollmentMode=enabled;this.userText='';this.modelText='';
+    this.stopPlayback();
+  }
+  pauseMicrophone(paused:boolean){
+    this.microphonePaused=paused;
+    if(paused&&this.ready)this.send({realtimeInput:{audioStreamEnd:true}});
+  }
   private send(message:unknown){if(this.socket?.readyState===WebSocket.OPEN)this.socket.send(JSON.stringify(message));}
   private receive(message:any) {
     if(message.error){this.fail('O serviço de voz recusou a solicitação. Verifique o modelo Gemini Live configurado.');return;}
@@ -84,6 +94,16 @@ export class LiveSession {
       this.ready=true;this.callbacks.phase('listening');return;
     }
     const content=message.serverContent;if(!content)return;
+    // The guided flow owns the prompts. Use finalized user turns and discard model
+    // audio so a generated answer cannot impersonate consent or interrupt capture.
+    if(this.enrollmentMode){
+      if(content.inputTranscription?.text&&!this.microphonePaused)this.userText+=content.inputTranscription.text;
+      if(content.turnComplete){
+        const text=this.userText.trim();this.userText='';this.modelText='';
+        if(text)this.callbacks.transcript?.(text);
+      }
+      return;
+    }
     if(content.interrupted){this.flushTurn();this.stopPlayback();this.callbacks.phase('listening');}
     if(content.inputTranscription?.text){this.userText+=content.inputTranscription.text;if(!this.sources.size)this.callbacks.phase('thinking');}
     if(content.outputTranscription?.text)this.modelText+=content.outputTranscription.text;

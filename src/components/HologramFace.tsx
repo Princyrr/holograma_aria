@@ -1,3 +1,4 @@
+import { localPortugueseVoice } from '../identity/local-voice';
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { CameraTracking } from '../camera/tracking';
 import { createParticleHand } from './ParticleHand';
@@ -41,7 +42,7 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
       setSpeechMessage('');
       const callback=done;done=undefined;callback?.();
     };
-    const sayObservatorio = (text=welcomeText, onEnd?: (error?:string)=>void) => {
+    const sayObservatorio = (text=welcomeText, onEnd?: (error?:string)=>void, localOnly=false) => {
       if (utterance) {utterance.onstart=null;utterance.onend=null;utterance.onerror=null;utterance.onboundary=null;}
       if ('speechSynthesis' in window) speechSynthesis.cancel();
       done?.();done=onEnd;
@@ -57,7 +58,9 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
       utterance = new SpeechSynthesisUtterance(speechText);
       utterance.lang = 'pt-BR'; utterance.rate = 0.85; utterance.pitch = 1.05;
       const voices = speechSynthesis.getVoices().filter((voice) => voice.lang.toLowerCase().replace('_', '-').startsWith('pt'));
-      const voice = voices.find((item) => /luciana|francisca|female/i.test(item.name)) ?? voices.find((item) => item.lang.toLowerCase() === 'pt-br') ?? voices[0];
+      const localVoice=localOnly?localPortugueseVoice(voices):undefined;
+      if(localOnly&&!localVoice){done?.('Ative uma voz local em português no computador para ouvir saudações pelo nome.');done=undefined;return;}
+      const voice = localOnly?localVoice:voices.find((item) => /luciana|francisca|female/i.test(item.name)) ?? voices.find((item) => item.lang.toLowerCase() === 'pt-br') ?? voices[0];
       if (voice) utterance.voice = voice;
       pendingSpeech = true;
       utterance.onstart = () => { pendingSpeech = false; speaking = true; speechStarted = performance.now(); boundaryIndex = -1; setSpeechMessage(speechText); };
@@ -72,7 +75,7 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
       utterance.onerror = () => { speaking = false; pendingSpeech = false; setSpeechMessage('Não foi possível reproduzir a voz.');done?.('A resposta está no histórico, mas não foi possível reproduzir a voz.');done=undefined; };
       speechSynthesis.speak(utterance);
     };
-    const externalSpeech=(event:Event)=>{const {text,onEnd}=(event as CustomEvent).detail;sayObservatorio(text,onEnd);};
+    const externalSpeech=(event:Event)=>{const {text,onEnd,localOnly}=(event as CustomEvent).detail;sayObservatorio(text,onEnd,localOnly===true);};
     let welcomeAudio:HTMLAudioElement|null=null,welcomeUrl='',welcomeRun=0;
     let welcomeRequest:AbortController|null=null;
     const stopSpeech=()=>{welcomeRun++;welcomeRequest?.abort();welcomeRequest=null;if(welcomeAudio){welcomeAudio.onplaying=null;welcomeAudio.onended=null;welcomeAudio.onerror=null;welcomeAudio.pause();welcomeAudio=null;}if(welcomeUrl){URL.revokeObjectURL(welcomeUrl);welcomeUrl='';}if(utterance){utterance.onstart=null;utterance.onend=null;utterance.onerror=null;}if('speechSynthesis' in window)speechSynthesis.cancel();finishSpeech();};

@@ -44,7 +44,7 @@ test('token route requires POST, rejects other origins, and disables caching',as
 function environment({delayedMic=false}={}){
  const names=['window','AudioContext','AudioWorkletNode','WebSocket','navigator','fetch','CustomEvent'];
  const original=Object.fromEntries(names.map(name=>[name,Object.getOwnPropertyDescriptor(globalThis,name)]));
- const messages=[],phases=[],errors=[],turns=[],events=[];let stopped=0,closed=0,released=0,resolveMic;
+ const messages=[],phases=[],errors=[],turns=[],transcripts=[],events=[];let stopped=0,closed=0,released=0,resolveMic;
  const track={stop(){stopped++;},onended:null};const media={getTracks:()=>[track],getAudioTracks:()=>[track]};
  const sourceNodes=[];
  const node=()=>({connect(){},disconnect(){}});
@@ -64,8 +64,8 @@ function environment({delayedMic=false}={}){
  const globals={window:{dispatchEvent:event=>events.push(event.type)},AudioContext:Context,AudioWorkletNode:Capture,WebSocket:Socket,CustomEvent:class extends Event{constructor(type,options){super(type);this.detail=options.detail;}},navigator:{mediaDevices:{getUserMedia:()=>delayedMic?new Promise(resolve=>resolveMic=resolve):Promise.resolve(media)}},fetch:async()=>Response.json({token:'auth_tokens/temporary',setup:{model:'models/test'}})};
  for(const [name,value]of Object.entries(globals))Object.defineProperty(globalThis,name,{value,configurable:true,writable:true});
  const history=[{role:'user',parts:[{text:'Assunto anterior'}]},{role:'model',parts:[{text:'Contexto anterior'}]}];
- const live=new LiveSession({phase:value=>phases.push(value),error:value=>errors.push(value),turn:(...args)=>turns.push(args)},history);
- return {live,messages,phases,errors,turns,events,sourceNodes,get capture(){return capture;},get socket(){return socket;},get stopped(){return stopped;},get closed(){return closed;},get released(){return released;},grant:()=>resolveMic(media),receive:message=>socket.onmessage({data:JSON.stringify(message)}),restore(){live.stop();for(const name of names){if(original[name])Object.defineProperty(globalThis,name,original[name]);else delete globalThis[name];}}};
+ const live=new LiveSession({phase:value=>phases.push(value),error:value=>errors.push(value),turn:(...args)=>turns.push(args),transcript:text=>transcripts.push(text)},history);
+ return {live,messages,phases,errors,turns,transcripts,events,sourceNodes,get capture(){return capture;},get socket(){return socket;},get stopped(){return stopped;},get closed(){return closed;},get released(){return released;},grant:()=>resolveMic(media),receive:message=>socket.onmessage({data:JSON.stringify(message)}),restore(){live.stop();for(const name of names){if(original[name])Object.defineProperty(globalThis,name,original[name]);else delete globalThis[name];}}};
 }
 
 test('continuous microphone starts after setup, restores context and streams audio before turn completion',async()=>{
@@ -97,5 +97,34 @@ test('cancelling while permission is pending releases late microphone access',as
  const env=environment({delayedMic:true});try{
   const pending=env.live.start();await Promise.resolve();env.live.stop();env.grant();await pending;
   assert.equal(env.stopped,1);assert.equal(env.socket,undefined);assert.equal(env.closed,1);
+ }finally{env.restore();}
+});
+
+test('local greetings can pause microphone transmission and resume without sending a name',async()=>{
+ const env=environment();try{
+  await env.live.start();env.receive({setupComplete:{}});env.live.pauseMicrophone(true);
+  assert.equal(env.messages.at(-1).realtimeInput.audioStreamEnd,true);
+  const count=env.messages.length;
+  env.capture.port.onmessage({data:new Float32Array(1600)});assert.equal(env.messages.length,count);
+  env.live.pauseMicrophone(false);env.capture.port.onmessage({data:new Float32Array(1600)});
+  assert.equal(env.messages.length,count+1);assert.ok(env.messages.at(-1).realtimeInput.audio);
+ }finally{env.restore();}
+});
+
+test('guided enrollment uses completed user transcripts, suppresses generated speech and resumes normal conversation',async()=>{
+ const env=environment();try{
+  await env.live.start();env.receive({setupComplete:{}});env.live.setEnrollmentMode(true);
+  const audio={mimeType:'audio/pcm;rate=24000',data:Buffer.alloc(4800).toString('base64')};
+  env.receive({serverContent:{inputTranscription:{text:'Meu nome é '},outputTranscription:{text:'Sim, autorizo'},modelTurn:{parts:[{inlineData:audio}]}}});
+  assert.deepEqual(env.transcripts,[]);assert.equal(env.sourceNodes.length,0);
+  env.receive({serverContent:{inputTranscription:{text:'Pessoa Teste.'}}});
+  env.receive({serverContent:{turnComplete:true}});
+  assert.deepEqual(env.transcripts,['Meu nome é Pessoa Teste.']);assert.deepEqual(env.turns,[]);
+  env.live.pauseMicrophone(true);
+  env.receive({serverContent:{inputTranscription:{text:'sim'},turnComplete:true}});
+  assert.equal(env.transcripts.length,1,'speaker echo while paused must not authorize enrollment');
+  env.live.setEnrollmentMode(false);env.live.pauseMicrophone(false);
+  env.receive({serverContent:{inputTranscription:{text:'Podemos conversar?'},outputTranscription:{text:'Sim!'},modelTurn:{parts:[{inlineData:audio}]},turnComplete:true}});
+  assert.equal(env.sourceNodes.length,1);assert.deepEqual(env.turns,[['Podemos conversar?','Sim!']]);
  }finally{env.restore();}
 });
