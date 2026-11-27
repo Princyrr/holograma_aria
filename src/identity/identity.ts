@@ -1,3 +1,5 @@
+import {timeGreeting} from '../../shared/aria-time.mjs';
+export {timeGreeting} from '../../shared/aria-time.mjs';
 export type FaceProfile={id:string;name:string;descriptors:number[][];consentedAt:string};
 export const STORAGE_KEY='aria:consented-face-profiles:v1';
 export const SAMPLE_COUNT=6;
@@ -19,15 +21,26 @@ export function matchProfile(descriptor:Float32Array,profiles:FaceProfile[]):Fac
   if(!scores.length||scores[0].score>.45||(scores[1]&&scores[1].score-scores[0].score<.08))return null;
   return scores[0].profile;
 }
+export function greetingText(profile:FaceProfile|null,date:Date=new Date()) {
+  const period=timeGreeting(date);
+  return profile?`Oi, ${profile.name}! ${period}!`:`Olá! ${period}! Tudo bem?`;
+}
 export class IdentityGreeting {
-  private candidate='';private count=0;private greeted='';private missingSince:number|null=null;
-  private lastGreeting=new Map<string,number>();
-  update(profile:FaceProfile|null,facePresent:boolean,now:number):string|null {
-    if(!facePresent){this.candidate='';this.count=0;this.missingSince??=now;if(now-this.missingSince>3500)this.greeted='';return null;}
-    this.missingSince=null;const id=profile?.id??'unknown';
+  constructor(private clock:()=>Date=()=>new Date()){}
+  private candidate='';private count=0;
+  private greeted=new Set<string>();
+  private anonymous:Float32Array[]=[];
+  update(profile:FaceProfile|null,facePresent:boolean,_now:number,descriptor?:Float32Array):string|null {
+    if(!facePresent){this.candidate='';this.count=0;return null;}
+    let id=profile?`profile:${profile.id}`:'unknown';
+    if(!profile&&descriptor){
+      let index=this.anonymous.findIndex(reference=>distance(reference,descriptor)<=.5);
+      if(index<0){index=this.anonymous.length;this.anonymous.push(new Float32Array(descriptor));}
+      id=`anonymous:${index}`;
+    }
     if(this.candidate!==id){this.candidate=id;this.count=1;}else this.count++;
-    if(this.count<3||this.greeted===id||now-(this.lastGreeting.get(id)??-Infinity)<30000)return null;
-    this.greeted=id;this.lastGreeting.set(id,now);return profile?`Oi, ${profile.name}!`:'Olá! Tudo bem?';
+    if(this.count<3||this.greeted.has(id))return null;
+    this.greeted.add(id);return greetingText(profile,this.clock());
   }
 }
 

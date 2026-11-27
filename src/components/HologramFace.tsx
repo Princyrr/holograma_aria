@@ -2,6 +2,7 @@ import { localPortugueseVoice } from '../identity/local-voice';
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { CameraTracking } from '../camera/tracking';
 import { createParticleHand } from './ParticleHand';
+import { createRisingParticles } from './RisingParticles';
 import * as THREE from 'three';
 import faceUrl from '../assets/hologram-face-current.png';
 import shouldersUrl from '../assets/hologram-shoulders.png';
@@ -134,8 +135,6 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
     document.documentElement.addEventListener('pointerleave', resetGaze);
     window.addEventListener('blur', resetGaze);
     const particleHand=createParticleHand(renderer.getPixelRatio());
-    const greetingWave=()=>particleHand.trigger(performance.now());
-    window.addEventListener('aria-greeting-wave',greetingWave);
     const handScene=new THREE.Scene();
     handScene.add(particleHand.group);
     const handCamera=new THREE.OrthographicCamera(-2,2,2,-4,.1,50);
@@ -145,6 +144,7 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
     let material: THREE.ShaderMaterial | undefined;
     let portraitTexture: THREE.CanvasTexture | undefined;
     let frame = 0, disposed = false;
+    let risingParticles: ReturnType<typeof createRisingParticles> | undefined;
     const resize = () => {
       const bounds = container.getBoundingClientRect();
       renderer.setSize(window.innerWidth,window.innerHeight);
@@ -213,6 +213,8 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
         colors.push(color.r,color.g,color.b); alphas.push(pixels[i+3]/255); seeds.push(Math.random());
         origins.push((Math.random()-0.5)*6,(Math.random()-0.5)*5,(Math.random()-0.5)*2);
       }
+      risingParticles = createRisingParticles(positions, renderer.getPixelRatio());
+      faceGroup.add(risingParticles.points);
       geometry=new THREE.BufferGeometry();
       geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
       geometry.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
@@ -448,6 +450,7 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
         start??=now;
         material.uniforms.uFormation.value=reduced?1:Math.min(1,(now-start)/2200);
         material.uniforms.uTime.value=reduced?0:(now-start)/1000;
+        risingParticles?.update((now-start)/1000, material.uniforms.uTorsoStretch.value, reduced);
         const reactionTime = (now - reactionStart) / 1000;
         const rise = THREE.MathUtils.smoothstep(reactionTime, 0, 0.3);
         const fade = 1 - THREE.MathUtils.smoothstep(reactionTime, 1.65, 2.30);
@@ -483,7 +486,7 @@ export default function HologramFace({tracking}:{tracking:MutableRefObject<Camer
       frame=requestAnimationFrame(render);
     };
     frame=requestAnimationFrame(render);
-    return()=>{window.removeEventListener('aria-greeting-wave',greetingWave);stopSpeech();window.removeEventListener('aria-audio-start',audioStart);window.removeEventListener('aria-audio-end',audioEnd);window.removeEventListener('aria-speak',externalSpeech);window.removeEventListener('aria-stop',stopSpeech);done?.();disposed=true; window.clearTimeout(clickTimer); if (utterance) { utterance.onstart = null; utterance.onboundary = null; utterance.onend = null; utterance.onerror = null; if (speaking || pendingSpeech) speechSynthesis.cancel(); } cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('resize',resize); container.removeEventListener('pointerdown',pointerDown); container.removeEventListener('pointerup',pointerUp); reactToClick.current=()=>{}; window.removeEventListener('pointermove',followPointer); document.documentElement.removeEventListener('pointerleave',resetGaze); window.removeEventListener('blur',resetGaze); particleHand.dispose(); portraitTexture?.dispose(); image.onload=null; image.onerror=null; shoulders.onload=null; shoulders.onerror=null; geometry?.dispose(); material?.dispose(); renderer.dispose(); renderer.domElement.remove();};
+    return()=>{stopSpeech();window.removeEventListener('aria-audio-start',audioStart);window.removeEventListener('aria-audio-end',audioEnd);window.removeEventListener('aria-speak',externalSpeech);window.removeEventListener('aria-stop',stopSpeech);done?.();disposed=true; window.clearTimeout(clickTimer); if (utterance) { utterance.onstart = null; utterance.onboundary = null; utterance.onend = null; utterance.onerror = null; if (speaking || pendingSpeech) speechSynthesis.cancel(); } cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('resize',resize); container.removeEventListener('pointerdown',pointerDown); container.removeEventListener('pointerup',pointerUp); reactToClick.current=()=>{}; window.removeEventListener('pointermove',followPointer); document.documentElement.removeEventListener('pointerleave',resetGaze); window.removeEventListener('blur',resetGaze); particleHand.dispose(); risingParticles?.dispose(); portraitTexture?.dispose(); image.onload=null; image.onerror=null; shoulders.onload=null; shoulders.onerror=null; geometry?.dispose(); material?.dispose(); renderer.dispose(); renderer.domElement.remove();};
   },[]);
   return <div ref={host} className="face-hologram-view" role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); reactToClick.current(); } }} aria-label="Clique para sorrir e piscar; dois cliques rápidos para dar boas-vindas ao Observatório das Indústrias da Paraíba">{speechMessage && <p className="absolute bottom-4 left-0 right-0 text-center text-cyan-200" role="status">{speechMessage}</p>}{failed&&<p className="particle-fallback">Não foi possível exibir o holograma neste navegador.</p>}</div>;
 }

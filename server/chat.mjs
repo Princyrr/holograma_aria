@@ -1,4 +1,6 @@
-export async function chat(contents, {key, model = 'gemini-3.6-flash', request = fetch, audio} = {}) {
+import {ariaClockContext} from '../shared/aria-time.mjs';
+const VOICE_STYLE = 'Feminine, warm, natural conversational Brazilian Portuguese. Relaxed pace, expressive but subtle, friendly and welcoming. Speak like a person talking directly to a friend, with natural pauses and intonation.';
+export async function chat(contents, {key, model = 'gemini-3.6-flash', request = fetch, audio, now = () => new Date()} = {}) {
   if (!key) throw Object.assign(new Error('Configure GEMINI_API_KEY no arquivo .env.local.'), {status:503});
   if (!Array.isArray(contents) || !contents.length || contents.length > 21 || contents.at(-1)?.role !== 'user' || contents.some((turn,i) => turn.role !== (i % 2 ? 'model' : 'user') || !Array.isArray(turn.parts) || turn.parts.length !== 1 || typeof turn.parts[0]?.text !== 'string' || !turn.parts[0].text.trim() || turn.parts[0].text.length > 8000)) throw Object.assign(new Error('A conversa enviada é inválida ou muito longa.'), {status:400});
   if (audio) validateAudio(audio);
@@ -6,7 +8,7 @@ export async function chat(contents, {key, model = 'gemini-3.6-flash', request =
   const generationConfig = {maxOutputTokens:2048,...(audio ? {responseMimeType:'application/json',responseSchema:{type:'OBJECT',properties:{transcript:{type:'STRING'},text:{type:'STRING'}},required:['transcript','text']}} : {})};
   const response = await request(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method:'POST', headers:{'Content-Type':'application/json','x-goog-api-key':key}, signal:AbortSignal.timeout(45000),
-    body:JSON.stringify({systemInstruction:{parts:[{text:'Você é Aria, uma assistente virtual amigável. Responda em português brasileiro, de forma natural para ser falada em voz alta, sem Markdown. Responda às perguntas de assuntos variados com clareza. Por padrão, responda diretamente em uma a três frases curtas. Evite introduções e repetições. Desenvolva quando a pessoa pedir detalhes. Não invente fatos ou acesso a informações em tempo real.'}]},contents:conversation,generationConfig})
+    body:JSON.stringify({systemInstruction:{parts:[{text:'Você é Aria, uma assistente virtual amigável. Responda em português brasileiro, de forma natural para ser falada em voz alta, sem Markdown. Responda às perguntas de assuntos variados com clareza. Por padrão, responda diretamente em uma a três frases curtas. Evite introduções e repetições. Desenvolva quando a pessoa pedir detalhes. Não invente fatos ou acesso a informações em tempo real. '+ariaClockContext(now())}]},contents:conversation,generationConfig})
   });
   if (!response.ok) {
     const message = response.status === 429 ? 'O limite do Gemini foi atingido. Aguarde e tente novamente.' : [401,403].includes(response.status) ? 'A chave foi recusada pelo Google. Verifique a chave e as permissões da API.' : response.status === 404 ? 'O modelo configurado não está disponível para esta chave.' : response.status === 400 ? 'O Google recusou a solicitação. Verifique a chave e o modelo configurados.' : 'O Gemini está indisponível. Tente novamente.';
@@ -70,7 +72,7 @@ export function pcmToWav(pcm,rate=24000) {
 export async function synthesize(text,{key,ttsModel='gemini-3.8-flash-tts',voice='Kore',request=fetch}={}) {
   if(!key)throw Object.assign(new Error('Configure a chave do Gemini.'),{status:503});
   if(typeof text!=='string'||!text.trim()||text.length>12000)throw Object.assign(new Error('Texto de voz inválido ou muito longo.'),{status:400});
-  const response=await request(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(ttsModel)}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},signal:AbortSignal.timeout(60000),body:JSON.stringify({contents:[{role:'user',parts:[{text,speech_metadata:{style:'Feminine, warm, natural conversational Brazilian Portuguese. Relaxed pace, expressive but subtle, friendly and welcoming. Speak like a person talking directly to a friend, with natural pauses and intonation.'}}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{voice}}}})});
+  const response=await request(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(ttsModel)}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},signal:AbortSignal.timeout(60000),body:JSON.stringify({contents:[{role:'user',parts:[{text,speech_metadata:{style:VOICE_STYLE}}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{voice}}}})});
   if(!response.ok)throw apiError(response.status,'voz natural');
   const data=await response.json();const audio=data.candidates?.[0]?.content?.parts?.find(p=>p.inlineData)?.inlineData;
   if(!audio?.data)throw apiError(502,'voz natural');
@@ -82,7 +84,7 @@ export async function synthesize(text,{key,ttsModel='gemini-3.8-flash-tts',voice
 
 
 // Only a one-use temporary token reaches the browser; the API key stays on the server.
-export async function createLiveToken({key,liveModel='gemini-3.8-live',voice='Kore',request=fetch}={}) {
+export async function createLiveToken({key,liveModel='gemini-3.8-live',voice='Kore',request=fetch,now=()=>new Date()}={}) {
   if(!key)throw Object.assign(new Error('Configure GEMINI_API_KEY no arquivo .env.local.'),{status:503});
   const response=await request('https://generativelanguage.googleapis.com/v1beta/auth_tokens',{
     method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},signal:AbortSignal.timeout(15000),
@@ -94,7 +96,7 @@ export async function createLiveToken({key,liveModel='gemini-3.8-live',voice='Ko
   return {token:token.name,setup:{
     model:'models/'+liveModel.replace(/^models\//,''),
     generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:voice}}}},
-    systemInstruction:{parts:[{text:'Você é Aria, a assistente virtual do Observatório da Indústria. Converse em português brasileiro, com voz feminina acolhedora e natural. Responda diretamente em uma a três frases curtas, a menos que a pessoa peça detalhes. Use o contexto da conversa nas perguntas seguintes. Não invente fatos nem acesso a informações em tempo real. Espere a pessoa falar antes de responder.'}]},
+    systemInstruction:{parts:[{text:'Você é Aria, a assistente virtual do Observatório da Indústria. Converse em português brasileiro, com voz feminina acolhedora e natural. Responda diretamente em uma a três frases curtas, a menos que a pessoa peça detalhes. Use o contexto da conversa nas perguntas seguintes. Não invente fatos nem acesso a informações em tempo real. Espere a pessoa falar antes de responder. As atualizações de contexto da câmera informam apenas o nome reconhecido, nunca imagens. Use sempre a atualização mais recente para responder quem sou eu com Você é seguido do nome reconhecido. Sem reconhecimento seguro, com câmera desligada ou várias pessoas, diga que não consegue identificar pela câmera agora; nunca deduza o nome por cumprimentos ou conversas anteriores. Não responda às atualizações de contexto nem repita cumprimentos por causa delas. Preserve uma voz clara, presente e bem articulada, sem sussurrar ou soar abafada. Estilo de voz: '+VOICE_STYLE+' '+ariaClockContext(now())}]},
     inputAudioTranscription:{},outputAudioTranscription:{},
     realtimeInputConfig:{automaticActivityDetection:{silenceDurationMs:500,prefixPaddingMs:100},activityHandling:'START_OF_ACTIVITY_INTERRUPTS'},
     contextWindowCompression:{slidingWindow:{}}

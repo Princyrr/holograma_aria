@@ -8,7 +8,25 @@ export default function LiveVoiceChat(){
   const [notice,setNotice]=useState('Ative o microfone para conversar em tempo real.');
   const session=useRef<LiveSession|null>(null),history=useRef<LiveTurn[]>([]),generation=useRef(0);
   const greeting=useRef<{abort:AbortController;audio:HTMLAudioElement|null;url:string}|null>(null);
+  const cameraName=useRef<string|null>(null),identityExpiry=useRef(0);
   const cache=useRef(new Map<string,Blob>());
+  const preparing=useRef(new Map<string,{promise:Promise<Blob>;abort:AbortController}>());
+  function prepareGreeting(text:string):Promise<Blob>{
+    const cached=cache.current.get(text);if(cached)return Promise.resolve(cached);
+    const pending=preparing.current.get(text);if(pending)return pending.promise;
+    const abort=new AbortController();
+    const promise=(async()=>{
+      try{
+        const response=await fetch('/api/speech',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text}),signal:abort.signal});
+        if(!response.ok)throw new Error('Falha ao preparar a saudação.');
+        const blob=await response.blob();if(abort.signal.aborted)throw new DOMException('Cancelado.','AbortError');
+        if(cache.current.size>=32)cache.current.delete(cache.current.keys().next().value!);
+        cache.current.set(text,blob);return blob;
+      }finally{if(preparing.current.get(text)?.abort===abort)preparing.current.delete(text);}
+    })();
+    preparing.current.set(text,{promise,abort});return promise;
+  }
+  function cancelPreparation(){for(const pending of preparing.current.values())pending.abort.abort();preparing.current.clear();}
   const enrollment=useRef<EnrollmentConnection|null>(null);
   const livePhase=useRef<LivePhase>('connecting'),pendingName=useRef(''),namedSpeaking=useRef(false),greetingRun=useRef(0),resumeTimer=useRef(0);
   function stopGreeting(){const current=greeting.current;if(!current)return;greeting.current=null;current.abort.abort();if(current.audio){current.audio.onended=null;current.audio.onerror=null;current.audio.onplaying=null;current.audio.pause();}if(current.url)URL.revokeObjectURL(current.url);window.dispatchEvent(new Event('aria-audio-end'));}
@@ -17,14 +35,7 @@ export default function LiveVoiceChat(){
     const current={abort:new AbortController(),audio:null as HTMLAudioElement|null,url:''};greeting.current=current;
     const finish=(error?:string)=>{if(greeting.current!==current)return;stopGreeting();onEnd?.(error);};
     try{
-      let blob=cache.current.get(text);
-      if(!blob){
-        const response=await fetch('/api/speech',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text}),signal:current.abort.signal});
-        if(!response.ok)throw new Error();blob=await response.blob();
-        if(greeting.current!==current)return;
-        if(cache.current.size>=32)cache.current.delete(cache.current.keys().next().value!);
-        cache.current.set(text,blob);
-      }
+      const blob=await prepareGreeting(text);
       if(greeting.current!==current)return;
       current.url=URL.createObjectURL(blob);const audio=new Audio(current.url);current.audio=audio;
       audio.onplaying=()=>{if(greeting.current!==current)return;window.dispatchEvent(new Event('aria-greeting-wave'));window.dispatchEvent(new CustomEvent('aria-audio-start',{detail:{text,duration:Number.isFinite(audio.duration)?audio.duration:text.length/12}}));};
@@ -105,22 +116,33 @@ export default function LiveVoiceChat(){
       transcript:text=>{if(current===generation.current)enrollment.current?.reply?.(text);},
       turn:(user,model)=>{if(current!==generation.current)return;history.current=[...history.current,{role:'user',parts:[{text:user.slice(0,8000)}]},{role:'model',parts:[{text:model.slice(0,8000)}]}].slice(-20) as LiveTurn[];}
     },history.current);
-    session.current=live;void live.start();
+    live.setCameraIdentity(cameraName.current);session.current=live;void live.start();
   }
   useEffect(()=>{
     enrollmentChannel.open=openEnrollment;
+    const prepare=(event:Event)=>{const text=(event as CustomEvent).detail?.text;if(typeof text==='string'&&text.length>0&&text.length<=100)void prepareGreeting(text).catch(()=>{});};
+    window.addEventListener('aria-prepare-greeting',prepare);
+    const clearIdentity=()=>{window.clearTimeout(identityExpiry.current);cameraName.current=null;session.current?.setCameraIdentity(null);};
+    const identity=(event:Event)=>{
+      window.clearTimeout(identityExpiry.current);
+      const name=(event as CustomEvent).detail?.name;
+      cameraName.current=typeof name==='string'&&name.length>=2&&name.length<=40?name:null;
+      session.current?.setCameraIdentity(cameraName.current);
+      if(cameraName.current)identityExpiry.current=window.setTimeout(clearIdentity,4000);
+    };
+    window.addEventListener('aria-camera-identity',identity);
+    window.dispatchEvent(new Event('aria-request-camera-identity'));
     const greet=(event:Event)=>{
       if(session.current||greeting.current||namedSpeaking.current||pendingName.current||enrollment.current)return;
       const detail=(event as CustomEvent).detail;
       if(typeof detail?.text!=='string'||!detail.text)return;
-      const text=detail.unknown===true?'Olá, tudo bem? Não reconheci seu rosto. Você gostaria de se cadastrar para eu reconhecer você nas próximas visitas? Se quiser, clique em Falar com a Aria para eu ouvir sua resposta.':detail.text;
-      if(detail.unknown===true)setNotice('Quer se cadastrar? Clique em Falar com a Aria e responda à pergunta. Só depois vou pedir seu nome.');
+      const text=detail.text;
       void playGreeting(text,error=>{if(error)setNotice(error);});
     };
     const named=(event:Event)=>{const text=(event as CustomEvent).detail?.text;if(typeof text==='string'&&text.length<=100)speakNamed(text);};
-    const off=()=>{endEnrollment();pendingName.current='';greetingRun.current++;namedSpeaking.current=false;window.clearTimeout(resumeTimer.current);session.current?.pauseMicrophone(false);window.dispatchEvent(new Event('aria-stop'));stopGreeting();};
+    const off=()=>{cancelPreparation();clearIdentity();endEnrollment();pendingName.current='';greetingRun.current++;namedSpeaking.current=false;window.clearTimeout(resumeTimer.current);session.current?.pauseMicrophone(false);window.dispatchEvent(new Event('aria-stop'));stopGreeting();};
     window.addEventListener('aria-identity-greeting',named);window.addEventListener('aria-greeting',greet);window.addEventListener('aria-camera-off',off);
-    return()=>{if(enrollmentChannel.open===openEnrollment)enrollmentChannel.open=null;endEnrollment();greetingRun.current++;window.clearTimeout(resumeTimer.current);window.dispatchEvent(new Event('aria-stop'));window.removeEventListener('aria-identity-greeting',named);generation.current++;session.current?.stop();session.current=null;stopGreeting();window.removeEventListener('aria-greeting',greet);window.removeEventListener('aria-camera-off',off);};
+    return()=>{cancelPreparation();window.removeEventListener('aria-prepare-greeting',prepare);window.clearTimeout(identityExpiry.current);window.removeEventListener('aria-camera-identity',identity);if(enrollmentChannel.open===openEnrollment)enrollmentChannel.open=null;endEnrollment();greetingRun.current++;window.clearTimeout(resumeTimer.current);window.dispatchEvent(new Event('aria-stop'));window.removeEventListener('aria-identity-greeting',named);generation.current++;session.current?.stop();session.current=null;stopGreeting();window.removeEventListener('aria-greeting',greet);window.removeEventListener('aria-camera-off',off);};
   },[]);
   return <section className="voice-chat" aria-label="Converse com a Aria em tempo real">
     <button className="aria-control-button" type="button" onClick={start} aria-pressed={phase!=='idle'}>{phase==='idle'?'🎤 Falar com a Aria':phase==='connecting'?'Cancelar conexão':'Encerrar conversa'}</button>

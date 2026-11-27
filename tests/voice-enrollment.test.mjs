@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import ts from 'typescript';
 const compile=source=>'data:text/javascript;base64,'+Buffer.from(ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.ES2022}}).outputText).toString('base64');
-const identityUrl=compile(await readFile(new URL('../src/identity/identity.ts',import.meta.url),'utf8'));
+const identityUrl=compile((await readFile(new URL('../src/identity/identity.ts',import.meta.url),'utf8')).replaceAll('../../shared/aria-time.mjs',new URL('../shared/aria-time.mjs',import.meta.url).href));
 const {validateProfiles,saveProfiles}=await import(identityUrl);
 const source=(await readFile(new URL('../src/identity/voice-enrollment.ts',import.meta.url),'utf8')).replace("'./identity'",JSON.stringify(identityUrl));
 const {authorized,spokenName,guidedEnrollment,captureSamples}=await import(compile(source));

@@ -4,13 +4,14 @@ import {readFile} from 'node:fs/promises';
 import ts from 'typescript';
 const compile=source=>'data:text/javascript;base64,'+Buffer.from(ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.ES2022,jsx:ts.JsxEmit.React}}).outputText).toString('base64');
 const tick=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-test('unknown faces explain the microphone button before guided enrollment, which waits for user transcripts and cancels with camera off',async()=>{
+test('unknown faces receive only a greeting without enrollment questions; voice transport still cancels with camera off',async()=>{
  const names=['window','navigator','Audio','fetch','CustomEvent','__ariaVoiceTest'];
  const originals=Object.fromEntries(names.map(name=>[name,Object.getOwnPropertyDescriptor(globalThis,name)]));
  const effects=[],audios=[],requests=[],instances=[];
  const fakeWindow=new EventTarget();Object.assign(fakeWindow,{setTimeout,clearTimeout,AudioContext:class{},AudioWorkletNode:class{}});
  const harness={useRef:value=>({current:value}),useState:value=>[value,()=>{}],useEffect:effect=>effects.push(effect),React:{createElement:(type,props,...children)=>({type,props,children})},LiveSession:class{
   paused=[];modes=[];constructor(callbacks){this.callbacks=callbacks;instances.push(this);}
+  setCameraIdentity(){}
   start(){this.callbacks.phase('listening');}stop(){}pauseMicrophone(value){this.paused.push(value);}setEnrollmentMode(value){this.modes.push(value);}
  }};
  const globals={window:fakeWindow,navigator:{mediaDevices:{getUserMedia(){}}},Audio:class{
@@ -19,7 +20,7 @@ test('unknown faces explain the microphone button before guided enrollment, whic
  for(const [name,value]of Object.entries(globals))Object.defineProperty(globalThis,name,{value,configurable:true,writable:true});
  let cleanup;
  try{
-  const identity=compile(await readFile(new URL('../src/identity/identity.ts',import.meta.url),'utf8'));
+  const identity=compile((await readFile(new URL('../src/identity/identity.ts',import.meta.url),'utf8')).replaceAll('../../shared/aria-time.mjs',new URL('../shared/aria-time.mjs',import.meta.url).href));
   const voiceUrl=compile((await readFile(new URL('../src/identity/voice-enrollment.ts',import.meta.url),'utf8')).replace("'./identity'",JSON.stringify(identity)));
   let source=await readFile(new URL('../src/LiveVoiceChat.tsx',import.meta.url),'utf8');
   source=source.replace(/^import .*\n/gm,'');
@@ -28,8 +29,12 @@ test('unknown faces explain the microphone button before guided enrollment, whic
   const {enrollmentChannel}=await import(voiceUrl);
   const tree=Component();cleanup=effects[0]();
   assert.equal(enrollmentChannel.open(),null,'must require the user to start the microphone');
+  window.dispatchEvent(new CustomEvent('aria-prepare-greeting',{detail:{text:'Olá! Tudo bem?'}}));await tick(0);
+  assert.equal(audios.length,0,'preparing speech must not greet before confirmation');
+  const preparedRequests=requests.length;
   window.dispatchEvent(new CustomEvent('aria-greeting',{detail:{text:'Olá! Tudo bem?',unknown:true}}));await tick(0);
-  assert.match(requests.at(-1).body.text,/Você gostaria de se cadastrar/);assert.match(requests.at(-1).body.text,/ouvir sua resposta/);assert.match(requests.at(-1).body.text,/clique em Falar com a Aria/);
+  assert.equal(requests.length,preparedRequests,'confirmed greeting reuses prepared audio with the same voice');
+  assert.equal(requests.at(-1).body.text,'Olá! Tudo bem?');
   assert.equal(instances.length,0,'the camera must not silently activate the microphone');
   audios.at(-1).onended();
   tree.children[0].props.onClick();

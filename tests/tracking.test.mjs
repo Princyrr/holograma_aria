@@ -73,10 +73,10 @@ function curledPalm(amount){
  }
  return hand;
 }
-test('discreet curling and extending fingers triggers without moving the wrist',()=>{
+test('curling fingers without swinging the hand does not trigger goodbye',()=>{
  const detector=new WaveDetector();
  const result=[0,.2,.5,.8,.5,.2,0].map((curl,i)=>detector.update(curledPalm(curl),i*100));
- assert.ok(result.some(Boolean));
+ assert.ok(result.every(value=>!value));
 });
 test('only curling once or holding curled fingers does not wave',()=>{
  const detector=new WaveDetector();
@@ -88,22 +88,22 @@ test('moving only one finger is not a goodbye',()=>{
   const hand=palm();hand[8]=curledPalm(curl)[8];assert.equal(detector.update(hand,i*100),false);
  }
 });
-test('discreet waves can repeat without a cooldown',()=>{
+test('repeated finger curls never trigger goodbye',()=>{
  const detector=new WaveDetector();
- for(const start of [0,800])assert.ok([0,.2,.5,.8,.5,.2,0].some((curl,i)=>detector.update(curledPalm(curl),start+i*100)));
+ for(const start of [0,800])assert.ok([0,.2,.5,.8,.5,.2,0].every((curl,i)=>!detector.update(curledPalm(curl),start+i*100)));
 });
 
-test('small finger curls are detected with a stationary wrist',()=>{
+test('small finger curls with a stationary wrist do not trigger goodbye',()=>{
  const detector=new WaveDetector();
- assert.ok([0,.06,.12,.18,.12,.06,0].map((curl,i)=>detector.update(curledPalm(curl),i*100)).some(Boolean));
+ assert.ok([0,.06,.12,.18,.12,.06,0].map((curl,i)=>detector.update(curledPalm(curl),i*100)).every(value=>!value));
 });
-test('fingertips bending toward the camera trigger a discreet wave',()=>{
+test('fingertips bending toward the camera do not trigger goodbye',()=>{
  const detector=new WaveDetector();
  const signals=[0,.015,.03,.05,.03,.015,0].map((depth,i)=>{
   const hand=palm();for(const tip of [8,12,16,20])hand[tip].z=-depth;
   return detector.update(hand,i*100);
  });
- assert.ok(signals.some(Boolean));
+ assert.ok(signals.every(value=>!value));
 });
 test('small finger tracking noise does not trigger a wave',()=>{
  const detector=new WaveDetector();
@@ -113,28 +113,28 @@ test('small finger tracking noise does not trigger a wave',()=>{
  }
 });
 
-test('quick discreet wave works with two fingers and four camera frames',()=>{
+test('quick movement of two fingers does not trigger goodbye',()=>{
  const detector=new WaveDetector();
  const signals=[0,.14,.28,0].map((curl,i)=>{
   const hand=palm(),curled=curledPalm(curl);
   hand[8]=curled[8];hand[12]=curled[12];
   return detector.update(hand,i*100);
  });
- assert.ok(signals.some(Boolean));
+ assert.ok(signals.every(value=>!value));
 });
-test('wave works when the fingers never fully straighten',()=>{
+test('bent fingers alone do not trigger goodbye',()=>{
  const detector=new WaveDetector();
- assert.ok([.75,.9,1,.9,.75].map((curl,i)=>detector.update(curledPalm(curl),i*100)).some(Boolean));
+ assert.ok([.75,.9,1,.9,.75].map((curl,i)=>detector.update(curledPalm(curl),i*100)).every(value=>!value));
 });
-test('slow discreet wave tolerates a brief tracking gap',()=>{
+test('slow finger curls do not trigger goodbye',()=>{
  const detector=new WaveDetector();
- assert.ok([0,.25,.5,.25,0].map((curl,i)=>detector.update(curledPalm(curl),i*500)).some(Boolean));
+ assert.ok([0,.25,.5,.25,0].map((curl,i)=>detector.update(curledPalm(curl),i*500)).every(value=>!value));
 });
 
-test('wave kind distinguishes finger curls from a whole-hand lateral wave',()=>{
+test('only lateral hand motion triggers a wave',()=>{
  const fingers=new WaveDetector();let fingerKind=null;
  for(const [i,curl] of [0,.2,.5,.8,.5,.2,0].entries())if(fingers.update(curledPalm(curl),i*100))fingerKind=fingers.lastKind;
- assert.equal(fingerKind,'fingers');
+ assert.equal(fingerKind,null);
  const lateral=new WaveDetector();let lateralKind=null;
  for(const [i,offset] of sweep.entries())if(lateral.update(palm(.5+offset),i*100))lateralKind=lateral.lastKind;
  assert.equal(lateralKind,'sideways');
@@ -217,4 +217,14 @@ test('returning groups receive varied crowd greetings',()=>{
  detector.update(group,0);assert.equal(detector.update(group,700),'Quanta gente! Tudo bem com vocês?');
  detector.update([],6000);detector.update([],8500);detector.update(group,9000);
  assert.equal(detector.update(group,9700),'Oi, pessoal! Que bom ver vocês por aqui!');
+});
+
+test('raising then holding an open hand with camera jitter never waves',()=>{
+ const detector=new WaveDetector();
+ for(let i=0;i<80;i++){
+  const hand=palm(.5+Math.sin(i)*.012);
+  for(const point of hand)point.y+=Math.max(0,12-i)*.02+Math.cos(i)*.004;
+  assert.equal(detector.update(hand,i*100),false);
+ }
+ assert.ok(wave(detector,9000)>=1,'a deliberate wave after holding the hand still is recognized');
 });

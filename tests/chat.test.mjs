@@ -58,3 +58,11 @@ test('combined audio request rejects invalid audio, silence and malformed respon
   await assert.rejects(chat(contents,{key:'secret',audio:{mimeType:'audio/webm',data:'YWJjZA=='},request:async()=>new Response(JSON.stringify({candidates:[{content:{parts:[{text}]}}]}))}),{status});
  }
 });
+
+
+test('text conversation also receives the current Fortaleza greeting',async()=>{
+ await chat(contents,{key:'test',now:()=>new Date('2026-10-29T21:00:00Z'),request:async(url,options)=>{
+  assert.match(JSON.parse(options.body).systemInstruction.parts[0].text,/18:00.*America\/Fortaleza.*Boa noite/);
+  return Response.json({candidates:[{content:{parts:[{text:'Boa noite!'}]}}]});
+ }});
+});
